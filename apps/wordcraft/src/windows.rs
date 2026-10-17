@@ -89,7 +89,7 @@ pub fn other_count() -> usize {
 
 fn owner(path: &str) -> Option<u32> {
     let want = canonical(path);
-    others().into_iter().find(|(_, paths)| paths.iter().any(|p| *p == want)).map(|(pid, _)| pid)
+    others().into_iter().find(|(_, paths)| paths.contains(&want)).map(|(pid, _)| pid)
 }
 
 fn request_focus(pid: u32) {

@@ -171,6 +171,7 @@ pub fn canvas_events(app: &mut WordApp, ctx: &egui::Context) {
             match &e {
                 egui::Event::Text(t) => {
                     let m = ctx.input(|i| i.modifiers);
+                    #[allow(clippy::nonminimal_bool)]
                     if !(m.command || (m.ctrl && !cfg!(target_os = "macos"))) && !t.is_empty() && t.chars().all(|c| !c.is_control()) {
                         let _ = app.run("equation.type", json!({"text": t}));
                     }

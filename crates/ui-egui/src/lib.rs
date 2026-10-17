@@ -80,6 +80,34 @@ pub struct Services {
     /// Desktop: the picture on the system clipboard, if any — egui's paste only carries text
     /// (#45). Read when Paste finds no text; see [`paste_picture`].
     pub clipboard_picture: Option<Box<dyn Fn() -> Option<paste_picture::ClipboardPicture>>>,
+    /// Desktop: several windows, each its own process with its own document. Asked to open a new
+    /// blank window, to open a file in another window (or focus the window that has it), or
+    /// whether another window already has a file. `None` where there is one window (web, tests).
+    pub windows: Option<Box<dyn Fn(WindowRequest<'_>) -> WindowOutcome>>,
+}
+
+/// What the app asks of the window host (`Services::windows`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowRequest<'a> {
+    /// A new window with a blank document.
+    New,
+    /// This file, in another window: focus the one that has it open, else start one.
+    Open(&'a str),
+    /// Does another window have this file open? Answered with `Focused` or `OpenHere` (no).
+    Owned(&'a str),
+}
+
+/// The window host's answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WindowOutcome {
+    /// A new window was started.
+    Spawned,
+    /// Another window already has the file; it was brought to the front.
+    Focused,
+    /// No other window is involved: carry on in this one.
+    OpenHere,
+    /// The host couldn't do it.
+    Failed(String),
 }
 
 /// Files delivered asynchronously.
@@ -194,6 +222,9 @@ pub struct WordApp {
     /// The window title last sent; a viewport command schedules a repaint, so only send changes.
     sent_title: String,
     pub quit_requested: bool,
+    /// Until this time (`now_ms`), an empty untitled window opens a file itself instead of asking
+    /// for a new window: the window a launch with files is still setting up.
+    pub open_in_place_until: f64,
     pub autosave: bool,
     pub word_count: (u64, usize),
     last_autosave: f64,
@@ -263,6 +294,7 @@ impl WordApp {
             frame_ms: 0.0,
             sent_title: String::new(),
             quit_requested: false,
+            open_in_place_until: 0.0,
             autosave: true,
             word_count: (0, 0),
             last_autosave: 0.0,
@@ -319,6 +351,9 @@ impl WordApp {
     /// Close, Envelopes, Labels and Finish & Merge on a document with unsaved changes first ask
     /// Save / Don't Save / Cancel, and the command runs once that is answered (`ui.saveChanges`).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        if let Some(r) = self.route_to_window(id, &params) {
+            return r;
+        }
         // A button whose command needs input the user hasn't given yet opens its dialog (#240).
         if let Some(name) = input_dialog(id, &params)
             && widgets::enabled(self, id)
@@ -348,6 +383,79 @@ impl WordApp {
             self.dialog = Some(d);
         }
         r
+    }
+
+    /// Several windows (`Services::windows`): New without a template (Mod+N) and New Window start a
+    /// window; Open of a file another window has focuses that window; Open of a different file
+    /// leaves this window's document alone (a new window opens it) unless this window is an empty
+    /// untitled one, which takes it; Save As onto a file another window has open is refused, so
+    /// two windows never write the same file. `None`: carry on as before.
+    fn route_to_window(&mut self, id: &str, params: &Value) -> Option<Result<Value, String>> {
+        let host = self.services.windows.as_ref()?;
+        let pristine = self.session.path.is_none() && !self.session.dirty;
+        let path = params.get("path").and_then(Value::as_str);
+        match id {
+            "file.new" if params.get("template").is_none() => Some(self.new_window()),
+            "file.new" if !pristine => Some(self.new_window()),
+            "file.open" if params.get("data").is_none() => {
+                let path = path?;
+                if self.is_own_file(path) {
+                    if let Some(ctx) = &self.ctx {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
+                    self.ui.backstage = false;
+                    return Some(Ok(json!({"focused": true})));
+                }
+                // Always a new window, even from a blank one; only the window that is just starting
+                // up for this file (`open_in_place_until`) takes it itself.
+                if pristine && now_ms() < self.open_in_place_until {
+                    return None;
+                }
+                let r = host(WindowRequest::Open(path));
+                self.ui.backstage = false;
+                match r {
+                    WindowOutcome::Spawned | WindowOutcome::Focused => Some(Ok(json!({"newWindow": r == WindowOutcome::Spawned}))),
+                    WindowOutcome::OpenHere => None,
+                    WindowOutcome::Failed(e) => {
+                        self.status(e.clone());
+                        Some(Err(e))
+                    }
+                }
+            }
+            "file.saveAs" if path.is_some_and(|p| !self.is_own_file(p)) => {
+                let p = path?;
+                if host(WindowRequest::Owned(p)) == WindowOutcome::Focused {
+                    let msg = i18n::fmt(tl!("{path} is open in another window. Close it there first, or save under another name."), &[("path", p)]);
+                    self.status(msg.clone());
+                    return Some(Err(msg));
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `path` is the file this window's document came from.
+    fn is_own_file(&self, path: &str) -> bool {
+        let Some(own) = &self.session.path else { return false };
+        let same = |a: &std::path::Path, b: &std::path::Path| match (a.canonicalize(), b.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => a == b,
+        };
+        same(own, std::path::Path::new(path))
+    }
+
+    /// Ask the host for a new blank window.
+    fn new_window(&mut self) -> Result<Value, String> {
+        let Some(host) = &self.services.windows else { return Err("this app has one window".into()) };
+        self.ui.backstage = false;
+        match host(WindowRequest::New) {
+            WindowOutcome::Failed(e) => {
+                self.status(e.clone());
+                Err(e)
+            }
+            _ => Ok(json!({"newWindow": true})),
+        }
     }
 
     /// Run a command for a script or an agent (control channel, MCP bridge): never asks first.
@@ -543,6 +651,9 @@ impl WordApp {
                     self.save_as_dialog();
                 }
                 "insertPicture" => self.pick_picture(),
+                "newWindow" => {
+                    let _ = self.new_window();
+                }
                 "print" => {
                     self.ui.backstage = true;
                     self.ui.backstage_page = "print".into();
@@ -2589,5 +2700,86 @@ mod tests {
         a.run("ui.openRecipientList", json!({})).unwrap();
         a.run("format.bold", json!({})).unwrap();
         assert!(!a.recipient_list_pending);
+    }
+    /// Several windows: Mod+N and New Window start a window, a dirty document is never replaced by
+    /// Open (another window takes the file), a file another window has is focused not reopened,
+    /// and Save As onto a file another window has open is refused.
+    #[test]
+    fn windows_open_documents_side_by_side() {
+        let dir = scratch("windows");
+        let one = dir.join("one.docx");
+        let two = dir.join("two.docx");
+        let mut a = typed();
+        a.run("file.save", json!({"path": one.to_string_lossy()})).unwrap();
+        a.session.dirty = false;
+        let mut b = typed();
+        b.run("file.save", json!({"path": two.to_string_lossy()})).unwrap();
+
+        let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let seen = log.clone();
+        let owned = two.to_string_lossy().to_string();
+        let host = move |r: WindowRequest<'_>| match r {
+            WindowRequest::New => {
+                seen.borrow_mut().push("new".into());
+                WindowOutcome::Spawned
+            }
+            WindowRequest::Open(p) if p == owned => {
+                seen.borrow_mut().push(format!("focus {p}"));
+                WindowOutcome::Focused
+            }
+            WindowRequest::Open(p) => {
+                seen.borrow_mut().push(format!("spawn {p}"));
+                WindowOutcome::Spawned
+            }
+            WindowRequest::Owned(p) if p == owned => WindowOutcome::Focused,
+            WindowRequest::Owned(_) => WindowOutcome::OpenHere,
+        };
+        a.services.windows = Some(Box::new(host));
+        let doc = body_text(&a);
+
+        // Mod+N and New Window: a new window; this document stays.
+        a.run("file.new", json!({})).unwrap();
+        a.run("file.newWindow", json!({})).unwrap();
+        assert_eq!(*log.borrow(), vec!["new", "new"]);
+        assert_eq!(body_text(&a), doc);
+
+        // Opening this window's own file focuses it: nothing is started.
+        a.run("file.open", json!({"path": one.to_string_lossy()})).unwrap();
+        assert_eq!(log.borrow().len(), 2);
+
+        // Another window has two.docx: focus it. A new file gets a new window; even with unsaved
+        // changes here, with no prompt and nothing lost.
+        a.run("text.insert", json!({"text": "unsaved"})).unwrap();
+        a.run("file.open", json!({"path": two.to_string_lossy()})).unwrap();
+        let third = dir.join("three.docx").to_string_lossy().to_string();
+        a.run("file.open", json!({"path": third})).unwrap();
+        assert_eq!(log.borrow()[2], format!("focus {}", two.to_string_lossy()));
+        assert_eq!(log.borrow()[3], format!("spawn {third}"));
+        assert!(a.session.dirty && a.dialog.is_none(), "unsaved work stays, no prompt");
+        assert!(body_text(&a).contains("unsaved"));
+
+        // Save As over the other window's file is refused; under a new name it works.
+        let e = a.run("file.saveAs", json!({"path": two.to_string_lossy()})).unwrap_err();
+        assert!(e.contains("another window"), "{e}");
+        a.run("file.saveAs", json!({"path": dir.join("copy.docx").to_string_lossy()})).unwrap();
+
+        // Only a window still starting up for its launch files takes one itself; any other
+        // window, even a blank one, asks for a new window.
+        let mut fresh = WordApp::new(Session::new(wordcraft_doc::Document::new()), Services::default());
+        let seen = log.clone();
+        fresh.services.windows = Some(Box::new(move |_| {
+            seen.borrow_mut().push("host".into());
+            WindowOutcome::Spawned
+        }));
+        let before = log.borrow().len();
+        fresh.run("file.open", json!({"path": one.to_string_lossy()})).unwrap();
+        assert_eq!(log.borrow().len(), before + 1, "a blank window doesn't take it");
+        assert!(fresh.session.path.is_none());
+        fresh.open_in_place_until = now_ms() + 60_000.0;
+        let before = log.borrow().len();
+        fresh.run("file.open", json!({"path": one.to_string_lossy()})).unwrap();
+        assert_eq!(log.borrow().len(), before, "opened in place");
+        assert_eq!(fresh.session.path.as_deref(), Some(one.as_path()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -17,6 +17,7 @@ mod file_dialogs;
 mod graphics;
 mod logging;
 mod print;
+mod windows;
 
 use wordcraft_engine::Session;
 use wordcraft_ui_egui::{
@@ -33,15 +34,26 @@ struct App(
     Option<WindowGeometry>,
     Option<control_server::KeyFile>,
     file_dialogs::Launcher,
+    // The file this window had last time it told the other windows (`windows`).
+    Option<std::path::PathBuf>,
     #[cfg(target_os = "macos")] fmv_macos_events::Inbox,
 );
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
-        apple_events::poll(&self.4, &mut self.0, ctx);
+        apple_events::poll(&self.5, &mut self.0, ctx);
         self.0.logic(ctx);
         self.3.show(frame);
+        // Tell the other windows which file this one has, and come to the front when one asks.
+        if self.4 != self.0.session.path {
+            self.4 = self.0.session.path.clone();
+            windows::register(std::process::id(), &self.4.iter().map(|p| windows::canonical(&p.to_string_lossy())).collect::<Vec<_>>());
+        }
+        if windows::take_focus_request() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
         let prev = self.0.ui.window;
         self.0.ui.window = ctx.input(|i| WindowGeometry::track(prev, i.viewport(), i.viewport_rect().size()));
         if let Some(pos) = ctx.input(|i| take_rescue(&mut self.1, i.viewport())) {
@@ -64,6 +76,7 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
+        windows::unregister();
         if let Some(key_file) = &self.2 {
             key_file.remove();
         }
@@ -127,6 +140,7 @@ fn services(file_dialog: file_dialogs::Hook) -> Services {
         file_dialog: Some(file_dialog),
         print: Some(print::hook()),
         clipboard_picture: Some(Box::new(clipboard_picture)),
+        windows: Some(Box::new(windows::host)),
         ..Default::default()
     }
 }
@@ -210,7 +224,15 @@ fn main() -> eframe::Result {
     // DirectX 12 has no GPU driver (see graphics.rs).
     #[cfg(target_os = "windows")]
     graphics::configure(&mut options, eframe::wgpu::Backends::from_env());
-    let restored = saved_window();
+    // A window that starts while others are open cascades down and right of the saved position.
+    let restored = saved_window().map(|mut w| {
+        let others = windows::other_count().min(8) as f32;
+        if others > 0.0 {
+            w.position = w.position.map(|p| [p[0] + 30.0 * others, p[1] + 30.0 * others]);
+            w.maximized = false;
+        }
+        w
+    });
     if let Some(window) = restored {
         options.viewport = window.apply(options.viewport);
     }
@@ -237,16 +259,20 @@ fn main() -> eframe::Result {
                 app = app.with_control(rx);
                 key_file = file;
             }
+            // Files from the launch (command line, or Finder's first open event) fill this window.
+            app.open_in_place_until = wordcraft_ui_egui::now_ms() + 2500.0;
             for f in files {
                 if let Err(e) = app.run("file.open", serde_json::json!({"path": f})) {
                     log::warn!("{f}: {e}");
                 }
             }
+            windows::register(std::process::id(), &[]);
             Ok(Box::new(App(
                 app,
                 restored,
                 key_file,
                 dialogs,
+                None,
                 #[cfg(target_os = "macos")]
                 apple_events.connect(&cc.egui_ctx),
             )))

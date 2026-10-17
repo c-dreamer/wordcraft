@@ -29,6 +29,15 @@ fn set_author(s: &mut Session, v: &Value) -> CmdResult {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("file.new", "New", "File", new).key("Mod+N").params(r#"{"template"?: "blank|sample|letter|resume|report"}"#).pure(),
+        // Opens a second window with its own blank document (the desktop app starts another
+        // process; hosts without windows ignore the request). New Window is Mod+Alt+N because
+        // Mod+Shift+N is Normal Style.
+        CommandSpec::new("file.newWindow", "New Window", "File", |s, _| {
+            s.ui_requests.push(json!({"open": "newWindow"}));
+            sel_result(s)
+        })
+        .key("Mod+Alt+N")
+        .pure(),
         CommandSpec::new("file.open", "Open", "File", open)
             .key("Mod+O")
             .params(r#"{"path": string, "data"?: base64 (the file's bytes; `path` then only names it), "password"?: string (for a password-protected Word document)}"#)

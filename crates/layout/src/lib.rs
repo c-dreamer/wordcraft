@@ -140,6 +140,20 @@ pub enum Placed {
     },
 }
 
+impl Page {
+    /// `items[index]` belongs to the footnote or endnote area.
+    pub fn in_note_area(&self, index: usize) -> bool {
+        self.note_area.iter().any(|r| r.contains(&index))
+    }
+
+    /// Mark items pushed since `start` as the note area.
+    fn mark_note_area(&mut self, start: usize) {
+        if self.items.len() > start {
+            self.note_area.push(start..self.items.len());
+        }
+    }
+}
+
 impl Placed {
     fn translate(&mut self, dx: f32, dy: f32) {
         match self {
@@ -257,6 +271,10 @@ pub struct Page {
     /// Header / footer items (drawn dimmed while editing the body).
     pub header: Vec<Placed>,
     pub footer: Vec<Placed>,
+    /// Ranges of `items` that are the footnote or endnote area: the separator and the note's
+    /// text, shading and borders. While a note is being edited these stay at full strength and
+    /// only the body is dimmed.
+    pub note_area: Vec<std::ops::Range<usize>>,
     /// The body text area (margins).
     pub body: Rect,
     pub header_story: Option<u32>,
@@ -999,6 +1017,7 @@ impl PageBuilder<'_> {
             break;
         }
         if let Some(pg) = self.pages.last_mut() {
+            let start = pg.items.len();
             let len = if cont { self.sect.text_width() } else { 144.0 };
             let sy = top + NOTE_SEP / 2.0;
             pg.items.push(Placed::Rule { x0: x, y0: sy, x1: x + len, y1: sy, border: Border::single(0.5) });
@@ -1008,6 +1027,7 @@ impl PageBuilder<'_> {
                     pg.items.push(it);
                 }
             }
+            pg.mark_note_area(start);
         }
     }
     /// Section vertical alignment: move the page's body down (centre/bottom).
@@ -1238,6 +1258,7 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         pb.y += 12.0;
         let (x, ry) = (pb.col_x(), pb.y);
         if let Some(pg) = pb.page() {
+            let start = pg.items.len();
             pg.items.push(Placed::Rule {
                 x0: x,
                 y0: ry,
@@ -1245,6 +1266,7 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
                 y1: ry,
                 border: Border { style: wordcraft_doc::props::BorderStyle::Single, width: 0.5, color: None, space: 0.0 },
             });
+            pg.mark_note_area(start);
         }
         pb.y += 8.0;
         for id in endnotes {
@@ -1256,10 +1278,12 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
             }
             let (x, y) = (pb.col_x(), pb.y);
             if let Some(pg) = pb.page() {
+                let start = pg.items.len();
                 for mut it in items {
                     it.translate(x, y);
                     pg.items.push(it);
                 }
+                pg.mark_note_area(start);
             }
             pb.y += h;
         }

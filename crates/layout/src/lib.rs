@@ -829,10 +829,14 @@ struct PageBuilder<'a> {
     line_no: u32,
     /// Index of the first body item of the current page (vertical alignment shifts from here).
     page_items_start: usize,
-    /// Custom continuation separator for footnotes (from doc.settings.footnote_continuation).
-    footnote_continuation: Option<Arc<Blocks>>,
-    /// Custom continuation separator for endnotes (from doc.settings.endnote_continuation).
-    endnote_continuation: Option<Arc<Blocks>>,
+    /// Pre-laid-out footnote continuation separator items.
+    footnote_cont_items: Option<Vec<Placed>>,
+    /// Pre-laid-out endnote continuation separator items.
+    endnote_cont_items: Option<Vec<Placed>>,
+    /// Pre-laid-out footnote continuation notice items.
+    footnote_notice_items: Option<Vec<Placed>>,
+    /// Pre-laid-out endnote continuation notice items.
+    endnote_notice_items: Option<Vec<Placed>>,
 }
 
 /// Gap above the footnote separator and its length.
@@ -1022,9 +1026,40 @@ impl PageBuilder<'_> {
         }
         if let Some(pg) = self.pages.last_mut() {
             let start = pg.items.len();
-            let len = if cont { self.sect.text_width() } else { 144.0 };
             let sy = top + NOTE_SEP / 2.0;
-            pg.items.push(Placed::Rule { x0: x, y0: sy, x1: x + len, y1: sy, border: Border::single(0.5) });
+            let mut cur_y = sy;
+            // Draw continuation separator or default separator.
+            if cont {
+                // Page starts with a continued note: use custom continuation separator if available.
+                if let Some(items) = &self.footnote_cont_items {
+                    for mut it in items.clone() {
+                        it.translate(x, cur_y);
+                        pg.items.push(it);
+                    }
+                    // Add the height of the separator items.
+                    for it in items {
+                        let (_, bottom) = v_span(it);
+                        cur_y = cur_y.max(bottom);
+                    }
+                } else {
+                    pg.items.push(Placed::Rule { x0: x, y0: sy, x1: x + self.sect.text_width(), y1: sy, border: Border::single(0.5) });
+                    cur_y = sy;
+                }
+                // Draw continuation notice if available.
+                if let Some(items) = &self.footnote_notice_items {
+                    for mut it in items.clone() {
+                        it.translate(x, cur_y);
+                        pg.items.push(it);
+                    }
+                    for it in items {
+                        let (_, bottom) = v_span(it);
+                        cur_y = cur_y.max(bottom);
+                    }
+                }
+            } else {
+                // Normal footnote separator (short line).
+                pg.items.push(Placed::Rule { x0: x, y0: sy, x1: x + 144.0, y1: sy, border: Border::single(0.5) });
+            }
             for (n, ny) in placed {
                 for mut it in n.items {
                     it.translate(x, ny);
@@ -1201,9 +1236,68 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         float_tables: Vec::new(),
         line_no: 0,
         page_items_start: 0,
-        footnote_continuation: doc.settings.footnote_continuation.as_ref().and_then(|c| c.separator.as_ref()).cloned().map(Arc::new),
-        endnote_continuation: doc.settings.endnote_continuation.as_ref().and_then(|c| c.separator.as_ref()).cloned().map(Arc::new),
+        footnote_cont_items: None,
+        endnote_cont_items: None,
+        footnote_notice_items: None,
+        endnote_notice_items: None,
     };
+    // Pre-lay out custom continuation separators and notices (they don't change per page).
+    if let Some(cont) = &doc.settings.footnote_continuation {
+        if let Some(blocks) = &cont.separator {
+            let bl = layout_box(
+                &mut ctx,
+                StoryRef::Body,
+                blocks,
+                &[],
+                pb.sect.text_width(),
+                None,
+                0,
+                Some(PageFrame { sect: pb.sect, origin: (pb.sect.margin_left + pb.sect.gutter, 0.0) }),
+            );
+            pb.footnote_cont_items = Some(bl.items);
+        }
+        if let Some(blocks) = &cont.notice {
+            let bl = layout_box(
+                &mut ctx,
+                StoryRef::Body,
+                blocks,
+                &[],
+                pb.sect.text_width(),
+                None,
+                0,
+                Some(PageFrame { sect: pb.sect, origin: (pb.sect.margin_left + pb.sect.gutter, 0.0) }),
+            );
+            pb.footnote_notice_items = Some(bl.items);
+        }
+    }
+    if let Some(cont) = &doc.settings.endnote_continuation {
+        if let Some(blocks) = &cont.separator {
+            let bl = layout_box(
+                &mut ctx,
+                StoryRef::Body,
+                blocks,
+                &[],
+                pb.sect.text_width(),
+                None,
+                0,
+                Some(PageFrame { sect: pb.sect, origin: (pb.sect.margin_left + pb.sect.gutter, 0.0) }),
+            );
+            pb.endnote_cont_items = Some(bl.items);
+        }
+        if let Some(blocks) = &cont.notice {
+            let bl = layout_box(
+                &mut ctx,
+                StoryRef::Body,
+                blocks,
+                &[],
+                pb.sect.text_width(),
+                None,
+                0,
+                Some(PageFrame { sect: pb.sect, origin: (pb.sect.margin_left + pb.sect.gutter, 0.0) }),
+            );
+            pb.endnote_notice_items = Some(bl.items);
+        }
+    }
     let mut block = 0usize;
     for (si, (end, sect)) in sections.iter().enumerate() {
         let sect: &SectionProps = if web { sect_ref } else { sect };

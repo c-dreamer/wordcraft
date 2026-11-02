@@ -301,7 +301,7 @@ pub fn write_as(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
         &mut entries,
         &mut overrides,
         "word/settings.xml",
-        settings_xml(doc, !wr.footnotes.is_empty(), !wr.endnotes.is_empty()),
+        wr.settings_xml(!wr.footnotes.is_empty(), !wr.endnotes.is_empty()),
         &format!("{CT_WML}settings+xml"),
         PartRels::default(),
     );
@@ -544,7 +544,73 @@ impl Writer<'_> {
         self.current_note = None;
         self.pending_mark = None;
     }
-}
+
+    fn settings_xml(&mut self, footnotes: bool, endnotes: bool) -> Vec<u8> {
+        let s = &self.doc.settings;
+        let mut w = W::new();
+        let ns = xml::body_ns();
+        let ns_refs: Vec<(&str, &str)> = ns.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        w.open("w:settings", &ns_refs);
+        w.empty("w:zoom", &[("w:percent", "100")]);
+        if s.page_color.is_some() {
+            w.empty("w:displayBackgroundShape", &[]);
+        }
+        if s.mirror_margins {
+            w.empty("w:mirrorMargins", &[]);
+        }
+        if s.track_changes {
+            w.empty("w:trackRevisions", &[]);
+        }
+        if let Some(p) = &s.protection {
+            w.empty("w:documentProtection", &[("w:edit", p), ("w:enforcement", "1")]);
+        }
+        w.val("w:defaultTabStop", &crate::units::twips(s.default_tab.clamp(1.0, 1584.0)));
+        if s.auto_hyphenation {
+            w.empty("w:autoHyphenation", &[]);
+        }
+        if s.even_odd_headers {
+            w.empty("w:evenAndOddHeaders", &[]);
+        }
+        for (tag, v) in [("w:drawingGridHorizontalSpacing", s.grid_h), ("w:drawingGridVerticalSpacing", s.grid_v)] {
+            if v.is_finite() && (v - wordcraft_doc::DEFAULT_GRID).abs() > 0.01 {
+                w.val(tag, &crate::units::twips(v.clamp(0.5, 1584.0)));
+            }
+        }
+        w.val("w:characterSpacingControl", "doNotCompress");
+        for (tag, fmt, used, el, continuation) in [
+            ("w:footnotePr", s.footnote_format, footnotes, "w:footnote", &s.footnote_continuation),
+            ("w:endnotePr", s.endnote_format, endnotes, "w:endnote", &s.endnote_continuation),
+        ] {
+            w.open(tag, &[]);
+            w.val("w:numFmt", fmt.ooxml());
+            if used {
+                w.empty(el, &[("w:id", "-1")]);
+                w.empty(el, &[("w:id", "0")]);
+            }
+            if let Some(c) = continuation {
+                if let Some(sep) = &c.separator {
+                    w.open("w:continuationSeparator", &[]);
+                    self.blocks(&mut w, sep, &mut PartRels::default(), false, 0);
+                    w.close("w:continuationSeparator");
+                }
+                if let Some(notice) = &c.notice {
+                    w.open("w:continuationNotice", &[]);
+                    self.blocks(&mut w, notice, &mut PartRels::default(), false, 0);
+                    w.close("w:continuationNotice");
+                }
+            }
+            w.close(tag);
+        }
+        w.open("w:compat", &[]);
+        let mode = self.doc.settings.compat_mode.clamp(11, 15).to_string();
+        w.empty("w:compatSetting", &[("w:name", "compatibilityMode"), ("w:uri", "http://schemas.microsoft.com/office/word"), ("w:val", &mode)]);
+        w.close("w:compat");
+        if let Some(m) = &s.math {
+            math::math_pr(&mut w, m);
+        }
+        w.close("w:settings");
+        w.into_bytes()
+}}
 
 /// Built-in names Word keeps in lower case in styles.xml.
 fn file_style_name(name: &str) -> String {

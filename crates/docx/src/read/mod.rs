@@ -19,7 +19,7 @@ use wordcraft_doc::para::OBJ;
 use wordcraft_doc::props::Rgb;
 use wordcraft_doc::section::NumFormat;
 use wordcraft_doc::styles::{Style, StyleKind, StyleSheet, TableStyleParts};
-use wordcraft_doc::{Block, Blocks, Comment, Document, InlineObject, PartKind, Revision, RevisionKind};
+use wordcraft_doc::{Block, Blocks, Comment, Document, InlineObject, NoteContinuation, PartKind, Revision, RevisionKind};
 
 use crate::DocxError;
 use crate::package::{ContentTypes, EMBEDDED_PARTS, EmbeddedManifest, MAX_VBA_RELATED, Package, Rels, VBA_PROJECT_PART, VBA_RELATED, rel_is, rt};
@@ -303,6 +303,17 @@ impl Reader<'_> {
 
     fn xml(&self, path: &str) -> Result<Option<El>, DocxError> {
         self.pkg.xml(path)
+    }
+
+    /// Read blocks from a single element (e.g., w:continuationSeparator, w:continuationNotice).
+    /// Uses a temporary StoryCtx and Rels (empty) since these elements don't have relationships.
+    fn read_blocks_from_element(&mut self, el: &El) -> Result<Blocks, DocxError> {
+        let mut sc = StoryCtx::default();
+        let mut blocks = Blocks::new();
+        let empty_rels = Rels::default();
+        self.read_blocks(&mut sc, el, &empty_rels, &mut blocks, 0);
+        self.flush_pending(&mut sc, &mut blocks);
+        Ok(blocks)
     }
 
     pub fn revision(&mut self, kind: RevisionKind, e: &El) -> u32 {
@@ -658,7 +669,46 @@ impl Reader<'_> {
 
     fn read_settings(&mut self, path: &str) -> Result<(), DocxError> {
         let Some(root) = self.xml(path)? else { return Ok(()) };
+        // Read continuation separator/notice first to avoid borrow conflicts with self.doc.settings
+        let mut footnote_continuation = None;
+        let mut endnote_continuation = None;
+        for k in root.els() {
+            match k.name.as_str() {
+                "w:footnotePr" => {
+                    if let Some(cs) = k.child("w:continuationSeparator") {
+                        let separator = self.read_blocks_from_element(cs)?;
+                        let notice = if let Some(cn) = k.child("w:continuationNotice") {
+                            self.read_blocks_from_element(cn).ok()
+                        } else {
+                            None
+                        };
+                        footnote_continuation = Some(NoteContinuation { separator: Some(separator), notice });
+                    } else if let Some(cn) = k.child("w:continuationNotice") {
+                        let notice = self.read_blocks_from_element(cn)?;
+                        footnote_continuation = Some(NoteContinuation { separator: None, notice: Some(notice) });
+                    }
+                }
+                "w:endnotePr" => {
+                    if let Some(cs) = k.child("w:continuationSeparator") {
+                        let separator = self.read_blocks_from_element(cs)?;
+                        let notice = if let Some(cn) = k.child("w:continuationNotice") {
+                            self.read_blocks_from_element(cn).ok()
+                        } else {
+                            None
+                        };
+                        endnote_continuation = Some(NoteContinuation { separator: Some(separator), notice });
+                    } else if let Some(cn) = k.child("w:continuationNotice") {
+                        let notice = self.read_blocks_from_element(cn)?;
+                        endnote_continuation = Some(NoteContinuation { separator: None, notice: Some(notice) });
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Now apply settings
         let s = &mut self.doc.settings;
+        s.footnote_continuation = footnote_continuation;
+        s.endnote_continuation = endnote_continuation;
         for k in root.els() {
             match k.name.as_str() {
                 "w:compat" => {

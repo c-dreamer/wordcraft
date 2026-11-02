@@ -305,6 +305,19 @@ pub struct CoreProps {
     pub revision: u32,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+/// Continuation separator and notice for footnotes/endnotes (w:continuationSeparator, w:continuationNotice).
+/// When a note continues onto the next page, the separator is drawn and the notice text (if any) appears.
+pub struct NoteContinuation {
+    /// Custom separator (w:separator or w:continuationSeparator content). None = default line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub separator: Option<Blocks>,
+    /// Notice text before a continued note (w:continuationNotice). None = no notice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<Blocks>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -324,6 +337,12 @@ pub struct Settings {
     pub theme_name: String,
     pub footnote_format: section::NumFormat,
     pub endnote_format: section::NumFormat,
+    /// Custom continuation separator and notice for footnotes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footnote_continuation: Option<NoteContinuation>,
+    /// Custom continuation separator and notice for endnotes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endnote_continuation: Option<NoteContinuation>,
     pub protection: Option<String>,
     /// Word compatibility mode the document is laid out in (`compatibilityMode`): 15 for Word
     /// 2013 and later, which places a table's border at the margin rather than its text and lets
@@ -394,6 +413,8 @@ impl Default for Settings {
             theme_name: "Craft".into(),
             footnote_format: section::NumFormat::Decimal,
             endnote_format: section::NumFormat::LowerRoman,
+            footnote_continuation: None,
+            endnote_continuation: None,
             protection: None,
             compat_mode: COMPAT_MODE_CURRENT,
             grid_h: DEFAULT_GRID,

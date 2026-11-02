@@ -11,7 +11,7 @@ use wordcraft_doc::props::{
 use wordcraft_doc::section::{Columns, LineNumberRestart, LineNumbering, NumFormat, SectionProps, SectionStart};
 use wordcraft_doc::styles::{Style, StyleKind};
 use wordcraft_doc::table::{Cell, Table};
-use wordcraft_doc::{Block, Blocks, Comment, Document, InlineObject, Paragraph, PartKind, Revision, RevisionKind, Watermark, para_block};
+use wordcraft_doc::{Block, Blocks, Comment, Document, InlineObject, NoteContinuation, Paragraph, PartKind, Revision, RevisionKind, Watermark, para_block};
 
 fn rt(doc: &Document) -> Document {
     let bytes = wordcraft_docx::write(doc).expect("write");
@@ -1004,6 +1004,22 @@ fn settings_core_theme_round_trip() {
     let mut w = d.clone();
     w.settings.watermark = Some(Watermark::default());
     assert_eq!(rt(&w).settings.watermark, None);
+}
+
+#[test]
+fn note_continuation_round_trip() {
+    let mut d = Document::new();
+    d.settings.footnote_continuation = Some(NoteContinuation {
+        separator: Some(vec![para_block(Paragraph::with_text("Custom separator", CharProps::default()))]),
+        notice: Some(vec![para_block(Paragraph::with_text("Continued...", CharProps::default()))]),
+    });
+    d.settings.endnote_continuation = Some(NoteContinuation {
+        separator: Some(vec![para_block(Paragraph::with_text("End separator", CharProps::default()))]),
+        notice: None,
+    });
+    let r = rt(&d);
+    assert_eq!(r.settings.footnote_continuation, d.settings.footnote_continuation);
+    assert_eq!(r.settings.endnote_continuation, d.settings.endnote_continuation);
 }
 
 /// A document that uses everything, for second-generation stability checks.

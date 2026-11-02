@@ -829,6 +829,10 @@ struct PageBuilder<'a> {
     line_no: u32,
     /// Index of the first body item of the current page (vertical alignment shifts from here).
     page_items_start: usize,
+    /// Custom continuation separator for footnotes (from doc.settings.footnote_continuation).
+    footnote_continuation: Option<Arc<Blocks>>,
+    /// Custom continuation separator for endnotes (from doc.settings.endnote_continuation).
+    endnote_continuation: Option<Arc<Blocks>>,
 }
 
 /// Gap above the footnote separator and its length.
@@ -1197,6 +1201,8 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         float_tables: Vec::new(),
         line_no: 0,
         page_items_start: 0,
+        footnote_continuation: doc.settings.footnote_continuation.as_ref().and_then(|c| c.separator.as_ref()).cloned().map(Arc::new),
+        endnote_continuation: doc.settings.endnote_continuation.as_ref().and_then(|c| c.separator.as_ref()).cloned().map(Arc::new),
     };
     let mut block = 0usize;
     for (si, (end, sect)) in sections.iter().enumerate() {

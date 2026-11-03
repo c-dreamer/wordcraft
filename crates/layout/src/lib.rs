@@ -837,6 +837,10 @@ struct PageBuilder<'a> {
     footnote_notice_items: Option<Vec<Placed>>,
     /// Pre-laid-out endnote continuation notice items.
     endnote_notice_items: Option<Vec<Placed>>,
+    /// Pre-laid-out footnote normal separator items.
+    footnote_sep_items: Option<Vec<Placed>>,
+    /// Pre-laid-out endnote normal separator items.
+    endnote_sep_items: Option<Vec<Placed>>,
 }
 
 /// Gap above the footnote separator and its length.
@@ -1057,8 +1061,20 @@ impl PageBuilder<'_> {
                     }
                 }
             } else {
-                // Normal footnote separator (short line).
-                pg.items.push(Placed::Rule { x0: x, y0: sy, x1: x + 144.0, y1: sy, border: Border::single(0.5) });
+                // Normal footnote separator: use custom separator if available, else default short line.
+                if let Some(items) = &self.footnote_sep_items {
+                    for mut it in items.clone() {
+                        it.translate(x, cur_y);
+                        pg.items.push(it);
+                    }
+                    // Add the height of the separator items.
+                    for it in items {
+                        let (_, bottom) = v_span(it);
+                        cur_y = cur_y.max(bottom);
+                    }
+                } else {
+                    pg.items.push(Placed::Rule { x0: x, y0: sy, x1: x + 144.0, y1: sy, border: Border::single(0.5) });
+                }
             }
             for (n, ny) in placed {
                 for mut it in n.items {
@@ -1240,6 +1256,8 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
         endnote_cont_items: None,
         footnote_notice_items: None,
         endnote_notice_items: None,
+        footnote_sep_items: None,
+        endnote_sep_items: None,
     };
     // Pre-lay out custom continuation separators and notices (they don't change per page).
     if let Some(cont) = &doc.settings.footnote_continuation {
@@ -1297,6 +1315,33 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
             );
             pb.endnote_notice_items = Some(bl.items);
         }
+    }
+    // Pre-lay out custom normal separators (they don't change per page).
+    if let Some(blocks) = &doc.settings.footnote_separator {
+        let bl = layout_box(
+            &mut ctx,
+            StoryRef::Body,
+            blocks,
+            &[],
+            pb.sect.text_width(),
+            None,
+            0,
+            Some(PageFrame { sect: pb.sect, origin: (pb.sect.margin_left + pb.sect.gutter, 0.0) }),
+        );
+        pb.footnote_sep_items = Some(bl.items);
+    }
+    if let Some(blocks) = &doc.settings.endnote_separator {
+        let bl = layout_box(
+            &mut ctx,
+            StoryRef::Body,
+            blocks,
+            &[],
+            pb.sect.text_width(),
+            None,
+            0,
+            Some(PageFrame { sect: pb.sect, origin: (pb.sect.margin_left + pb.sect.gutter, 0.0) }),
+        );
+        pb.endnote_sep_items = Some(bl.items);
     }
     let mut block = 0usize;
     for (si, (end, sect)) in sections.iter().enumerate() {
@@ -1357,16 +1402,34 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
     if !endnotes.is_empty() && !web {
         pb.y += 12.0;
         let (x, ry) = (pb.col_x(), pb.y);
+        // Get the custom separator items before the mutable borrow.
+        let sep_items = pb.endnote_sep_items.clone();
         if let Some(pg) = pb.page() {
             let start = pg.items.len();
-            pg.items.push(Placed::Rule {
-                x0: x,
-                y0: ry,
-                x1: x + 144.0,
-                y1: ry,
-                border: Border { style: wordcraft_doc::props::BorderStyle::Single, width: 0.5, color: None, space: 0.0 },
-            });
+            // Normal endnote separator: use custom separator if available, else default short line.
+            let mut cur_y = ry;
+            if let Some(items) = sep_items {
+                for mut it in &items {
+                    let mut it = it.clone();
+                    it.translate(x, cur_y);
+                    pg.items.push(it);
+                }
+                for it in &items {
+                    let (_, bottom) = v_span(it);
+                    cur_y = cur_y.max(bottom);
+                }
+            } else {
+                pg.items.push(Placed::Rule {
+                    x0: x,
+                    y0: ry,
+                    x1: x + 144.0,
+                    y1: ry,
+                    border: Border { style: wordcraft_doc::props::BorderStyle::Single, width: 0.5, color: None, space: 0.0 },
+                });
+                cur_y = ry;
+            }
             pg.mark_note_area(start);
+            pb.y = cur_y;
         }
         pb.y += 8.0;
         for id in endnotes {

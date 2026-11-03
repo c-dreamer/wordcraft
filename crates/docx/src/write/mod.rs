@@ -203,18 +203,40 @@ pub fn write_as(doc: &Document, flavor: Flavor) -> Result<Vec<u8>, DocxError> {
         let mut prels = PartRels::default();
         let mut w = W::new();
         w.open(root, &ns_refs);
-        for (id, kind) in [("-1", "separator"), ("0", "continuationSeparator")] {
-            w.open(tag, &[("w:type", kind), ("w:id", id)]);
-            w.open("w:p", &[]);
-            w.open("w:pPr", &[]);
-            w.empty("w:spacing", &[("w:after", "0"), ("w:line", "240"), ("w:lineRule", "auto")]);
-            w.close("w:pPr");
-            w.open("w:r", &[]);
-            w.empty(if kind == "separator" { "w:separator" } else { "w:continuationSeparator" }, &[]);
-            w.close("w:r");
-            w.close("w:p");
-            w.close(tag);
+        // Write normal separator (w:type="separator" w:id="-1").
+        w.open(tag, &[("w:type", "separator"), ("w:id", "-1")]);
+        w.open("w:p", &[]);
+        w.open("w:pPr", &[]);
+        w.empty("w:spacing", &[("w:after", "0"), ("w:line", "240"), ("w:lineRule", "auto")]);
+        w.close("w:pPr");
+        w.open("w:r", &[]);
+        let sep_blocks = if foot { &doc.settings.footnote_separator } else { &doc.settings.endnote_separator };
+        if let Some(blocks) = sep_blocks {
+            wr.blocks(&mut w, blocks, &mut PartRels::default(), false, 0);
+        } else {
+            w.empty("w:separator", &[]);
         }
+        w.close("w:r");
+        w.close("w:p");
+        w.close(tag);
+        // Write continuation separator (w:type="continuationSeparator" w:id="0").
+        w.open(tag, &[("w:type", "continuationSeparator"), ("w:id", "0")]);
+        w.open("w:p", &[]);
+        w.open("w:pPr", &[]);
+        w.empty("w:spacing", &[("w:after", "0"), ("w:line", "240"), ("w:lineRule", "auto")]);
+        w.close("w:pPr");
+        w.open("w:r", &[]);
+        let cont = if foot { &doc.settings.footnote_continuation } else { &doc.settings.endnote_continuation };
+        if let Some(c) = cont
+            && let Some(blocks) = &c.separator
+        {
+            wr.blocks(&mut w, blocks, &mut PartRels::default(), false, 0);
+        } else {
+            w.empty("w:continuationSeparator", &[]);
+        }
+        w.close("w:r");
+        w.close("w:p");
+        w.close(tag);
         let mut k = 0;
         while let Some(pid) = (if foot { &wr.footnotes } else { &wr.endnotes }).get(k).copied() {
             k += 1;

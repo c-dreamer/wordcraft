@@ -343,6 +343,12 @@ pub struct Settings {
     /// Custom continuation separator and notice for endnotes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endnote_continuation: Option<NoteContinuation>,
+    /// Custom normal separator for footnotes (w:separator with w:id="-1" in footnotes.xml).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footnote_separator: Option<Blocks>,
+    /// Custom normal separator for endnotes (w:separator with w:id="-1" in endnotes.xml).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endnote_separator: Option<Blocks>,
     pub protection: Option<String>,
     /// Word compatibility mode the document is laid out in (`compatibilityMode`): 15 for Word
     /// 2013 and later, which places a table's border at the margin rather than its text and lets
@@ -415,6 +421,8 @@ impl Default for Settings {
             endnote_format: section::NumFormat::LowerRoman,
             footnote_continuation: None,
             endnote_continuation: None,
+            footnote_separator: None,
+            endnote_separator: None,
             protection: None,
             compat_mode: COMPAT_MODE_CURRENT,
             grid_h: DEFAULT_GRID,

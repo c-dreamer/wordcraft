@@ -766,6 +766,23 @@ impl Reader<'_> {
         let Some(root) = self.xml(path)? else { return Ok(()) };
         let rels = self.pkg.rels(path);
         let tag = if foot { "w:footnote" } else { "w:endnote" };
+        // Read the normal separator (w:type="separator" w:id="-1").
+        for n in root.children(tag) {
+            if n.attr("w:type") == Some("separator") && n.attr("w:id") == Some("-1") {
+                let mut sc = StoryCtx::default();
+                let mut blocks = Blocks::new();
+                self.read_blocks(&mut sc, n, &rels, &mut blocks, 0);
+                self.flush_pending(&mut sc, &mut blocks);
+                if !blocks.is_empty() {
+                    if foot {
+                        self.doc.settings.footnote_separator = Some(blocks);
+                    } else {
+                        self.doc.settings.endnote_separator = Some(blocks);
+                    }
+                }
+                break;
+            }
+        }
         for n in root.children(tag) {
             if n.attr("w:type").is_some_and(|t| t != "normal") {
                 continue;

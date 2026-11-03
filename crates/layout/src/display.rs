@@ -141,9 +141,12 @@ impl Draw {
 pub struct DisplayOptions {
     /// Show formatting marks (¶).
     pub marks: bool,
-    /// Dim headers/footers (editing the body) or the body (editing a header/footer).
+    /// Dim headers/footers (editing the body) or the body (editing a header, footer or note).
     pub dim_header: bool,
     pub dim_body: bool,
+    /// Dim the footnote and endnote area with the body. Editing a note sets `dim_body` and leaves
+    /// this false, so the separator and the note text stay at full strength.
+    pub dim_notes: bool,
     /// Show tracked changes as markup (coloured, underlined/struck).
     pub markup: bool,
     /// Show on-screen-only marks: equation placeholders and prompts (never in print or PDF).
@@ -160,6 +163,8 @@ impl Default for DisplayOptions {
             marks: false,
             dim_header: true,
             dim_body: false,
+            // Notes dim with the body unless the caller is editing a note and opts out.
+            dim_notes: true,
             markup: true,
             placeholders: false,
             hide_ink: false,
@@ -311,17 +316,19 @@ pub fn page_display(doc: &Document, page: &Page, opts: &DisplayOptions) -> Vec<D
     let mut out = Vec::new();
     let ha = if opts.dim_header { 0.45 } else { 1.0 };
     let ba = if opts.dim_body { 0.45 } else { 1.0 };
+    // Editing a note greys the body and leaves the note area (separator and note text) solid.
+    let na = if opts.dim_body && opts.dim_notes { 0.45 } else { 1.0 };
     for it in &page.header {
         item(doc, it, opts, ha, &mut out);
     }
     for it in &page.footer {
         item(doc, it, opts, ha, &mut out);
     }
-    for it in &page.items {
-        item(doc, it, opts, ba, &mut out);
+    for (i, it) in page.items.iter().enumerate() {
+        item(doc, it, opts, if page.in_note_area(i) { na } else { ba }, &mut out);
     }
     if opts.markup && (opts.revisions.insertions_deletions || opts.revisions.formatting) && opts.revisions.changed_lines != ChangeBar::None {
-        change_bars(doc, page, &opts.revisions, ba, &mut out);
+        change_bars(doc, page, &opts.revisions, ba, na, &mut out);
     }
     out
 }
@@ -331,7 +338,7 @@ pub const CHANGE_BAR: Rgb = Rgb(0x50, 0x50, 0x50);
 
 /// Bars in the margin beside body lines with tracked insertions or deletions, or (when shown)
 /// tracked formatting changes of their text, paragraph or paragraph mark.
-fn change_bars(doc: &Document, page: &Page, m: &MarkupOptions, alpha: f32, out: &mut Vec<Draw>) {
+fn change_bars(doc: &Document, page: &Page, m: &MarkupOptions, body_alpha: f32, note_alpha: f32, out: &mut Vec<Draw>) {
     // Outside: the left margin, or the outer one of a right-hand page with mirrored margins.
     let right = match m.changed_lines {
         ChangeBar::Right => true,
@@ -340,7 +347,8 @@ fn change_bars(doc: &Document, page: &Page, m: &MarkupOptions, alpha: f32, out: 
     };
     let bx = if right { page.body.right() + 9.0 } else { page.body.x - 9.0 };
     let color = m.changed_lines_color.unwrap_or(CHANGE_BAR);
-    for it in &page.items {
+    for (i, it) in page.items.iter().enumerate() {
+        let alpha = if page.in_note_area(i) { note_alpha } else { body_alpha };
         let Placed::Lines { story, path, para: pl, l0, l1, y, turn, .. } = it else { continue };
         if turn.is_turned() {
             continue;

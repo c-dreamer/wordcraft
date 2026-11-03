@@ -936,6 +936,69 @@ fn footnotes_sit_at_page_bottom() {
     assert!(l.caret_on(&Pos { story: StoryRef::Part(eid), path: Path::top(0), off: 0 }, 0).is_some());
 }
 
+/// Editing a footnote greys the body and leaves the note area (separator and note text) solid.
+/// Greying the header greys the notes with the body, which is how the page used to look while a
+/// note was being edited.
+#[test]
+fn editing_a_footnote_dims_the_body_and_not_the_note() {
+    let mut d = Document::from_text("Body sentence for the reference.");
+    let fid = footnote(&mut d, &Pos::body(0, 4), "The footnote itself.");
+    let eid = d.add_part(
+        wordcraft_doc::PartKind::Endnote,
+        vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("An endnote.", Default::default()))],
+    );
+    d.insert_object(
+        &Pos::body(0, 14),
+        InlineObject::NoteRef { kind: wordcraft_doc::para::NoteKind::Endnote, id: eid, custom: String::new() },
+        &Default::default(),
+    )
+    .unwrap();
+    let l = lay(&d);
+    let page = &l.pages[0];
+    for (i, it) in page.items.iter().enumerate() {
+        let Placed::Lines { story, .. } = it else { continue };
+        let note = matches!(story, StoryRef::Part(id) if *id == fid || *id == eid);
+        let body = matches!(story, StoryRef::Body);
+        if note {
+            assert!(page.in_note_area(i), "note text is in the note area");
+        }
+        if body {
+            assert!(!page.in_note_area(i), "body text is outside the note area");
+        }
+    }
+    let sep = page.items.iter().enumerate().find_map(|(i, it)| {
+        page.in_note_area(i).then_some(it).and_then(|it| if let Placed::Rule { x0, y0, .. } = it { Some((*x0, *y0)) } else { None })
+    });
+    let (sx, sy) = sep.expect("the note separator is in the note area");
+    let alpha_of = |draws: &[display::Draw], needle: &str| {
+        draws.iter().find_map(|d| match d {
+            display::Draw::Glyphs { text, alpha, .. } if text.contains(needle) => Some(*alpha),
+            _ => None,
+        })
+    };
+    let rule_alpha = |draws: &[display::Draw]| {
+        draws.iter().find_map(|d| match d {
+            display::Draw::Line { x0, y0, alpha, .. } if (*x0 - sx).abs() < 0.1 && (*y0 - sy).abs() < 0.1 => Some(*alpha),
+            _ => None,
+        })
+    };
+    let shown = |dim_body: bool, dim_notes: bool| {
+        display::page_display(&d, page, &display::DisplayOptions { dim_header: !dim_body, dim_body, dim_notes, ..Default::default() })
+    };
+    let editing = shown(true, false);
+    assert_eq!(alpha_of(&editing, "Body"), Some(0.45), "the body is grey");
+    assert_eq!(alpha_of(&editing, "footnote"), Some(1.0), "the footnote stays solid");
+    assert_eq!(alpha_of(&editing, "endnote"), Some(1.0), "the endnote stays solid");
+    assert_eq!(rule_alpha(&editing), Some(1.0), "the separator stays solid");
+    let header = shown(true, true);
+    assert_eq!(alpha_of(&header, "Body"), Some(0.45));
+    assert_eq!(alpha_of(&header, "footnote"), Some(0.45), "editing a header greys the notes too");
+    assert_eq!(rule_alpha(&header), Some(0.45));
+    let body = shown(false, true);
+    assert_eq!(alpha_of(&body, "Body"), Some(1.0));
+    assert_eq!(alpha_of(&body, "footnote"), Some(1.0));
+}
+
 #[test]
 fn deleted_note_anchors_take_no_number_and_print_no_note() {
     use wordcraft_doc::para::NoteKind;

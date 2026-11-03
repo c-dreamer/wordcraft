@@ -253,13 +253,13 @@ pub fn sync_fit_zoom(app: &mut WordApp, scale: f32) {
 }
 
 /// Fingerprint of a page's content for the texture cache.
-fn page_key(app: &WordApp, page: &Page, scale_px: f32, dim_body: bool) -> u64 {
+fn page_key(app: &WordApp, page: &Page, scale_px: f32, dim: FocusDim) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     scale_px.to_bits().hash(&mut h);
     let v = &app.session.view;
     (v.marks, v.show_markup, v.dark_mode, wordcraft_render::DARK_PAPER, v.hide_ink).hash(&mut h);
     app.session.prefs.markup.hash(&mut h);
-    dim_body.hash(&mut h);
+    (dim.dim_header, dim.dim_body, dim.dim_notes).hash(&mut h);
     format!("{:?}{:?}", app.session.doc.settings.page_color, app.session.doc.settings.watermark).hash(&mut h);
     (page.w.to_bits(), page.h.to_bits()).hash(&mut h);
     for list in [&page.items, &page.header, &page.footer] {
@@ -372,8 +372,8 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
         app.canvas.scroll_to_caret = true;
     }
     let caret = layout.caret_on(&app.session.sel.focus, app.session.page_hint);
-    // Editing a header/footer (or a note) dims the body; once per frame, for every page.
-    let dim_body = dims_body(app, &layout);
+    // Editing a header, footer or note dims the body. A note leaves its own area at full strength.
+    let dim = focus_dim(focus_part_kind(app, &layout));
     if let Some(c) = caret {
         app.session.page_hint = c.page;
     }
@@ -430,7 +430,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
             let sr = pr.translate(content_origin.to_vec2());
             let Some(page) = layout.pages.get(i) else { continue };
             let scale_px = (geo.scale * ppp).min(max_tex / page.w.max(1.0)).min(max_tex / page.h.clamp(1.0, 1e6)).max(0.05);
-            let key = page_key(app, page, scale_px, dim_body);
+            let key = page_key(app, page, scale_px, dim);
             let fresh = app.canvas.textures.get(&i).is_some_and(|(k, _)| *k == key);
             let current_scale = geo.scale * ppp;
             let visual_sr = if fresh && (scale_px - current_scale).abs() <= 0.0001_f32.max(current_scale.abs() * 0.0001) {
@@ -454,8 +454,9 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                 opts.display.revisions = app.session.prefs.markup.clone();
                 opts.dark = dark_page;
                 opts.dark_paper = dark_paper;
-                opts.display.dim_header = !dim_body;
-                opts.display.dim_body = dim_body;
+                opts.display.dim_header = dim.dim_header;
+                opts.display.dim_body = dim.dim_body;
+                opts.display.dim_notes = dim.dim_notes;
                 let img = wordcraft_render::render_page(&app.session.doc, page, scale_px, &opts);
                 let px = img.to_straight();
                 let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &px);
@@ -1472,12 +1473,29 @@ pub fn editing_header_footer(app: &WordApp, layout: &DocLayout) -> bool {
     matches!(part_kind(app, story), Some(PartKind::Header | PartKind::Footer))
 }
 
-/// The body is dimmed while editing anything but the body (or a text box in it).
-fn dims_body(app: &WordApp, layout: &DocLayout) -> bool {
-    match app.session.sel.focus.story {
-        StoryRef::Body => false,
-        StoryRef::Part(_) if in_text_box(app) => editing_header_footer(app, layout),
-        StoryRef::Part(_) => true,
+/// Which story the caret is in, following a text box back to the story that holds it.
+fn focus_part_kind(app: &WordApp, layout: &DocLayout) -> Option<PartKind> {
+    let story = text_box_host(app, layout).unwrap_or(app.session.sel.focus.story);
+    part_kind(app, story)
+}
+
+/// How the page is dimmed for the story under the caret.
+///
+/// Editing a footnote or endnote greys the body only. The note area (separator and note text)
+/// stays at full strength, and so do headers and footers. Editing a header or footer greys the
+/// body and the notes. Editing the body (or a text box in it) greys the headers and footers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct FocusDim {
+    pub dim_header: bool,
+    pub dim_body: bool,
+    pub dim_notes: bool,
+}
+
+pub(crate) fn focus_dim(kind: Option<PartKind>) -> FocusDim {
+    match kind {
+        Some(PartKind::Footnote | PartKind::Endnote) => FocusDim { dim_header: false, dim_body: true, dim_notes: false },
+        Some(PartKind::TextBox) | None => FocusDim { dim_header: true, dim_body: false, dim_notes: false },
+        Some(PartKind::Header | PartKind::Footer | PartKind::Comment) => FocusDim { dim_header: false, dim_body: true, dim_notes: true },
     }
 }
 
@@ -1662,6 +1680,32 @@ fn is_followable_link(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Editing a footnote greys the body only. The note area stays at full strength. Editing a
+    /// header greys the body and the notes.
+    #[test]
+    fn footnote_edit_dims_the_body_only() {
+        use wordcraft_doc::PartKind;
+        let note = focus_dim(Some(PartKind::Footnote));
+        assert!(note.dim_body && !note.dim_notes && !note.dim_header);
+        assert_eq!(focus_dim(Some(PartKind::Endnote)), note);
+        let header = focus_dim(Some(PartKind::Header));
+        assert!(header.dim_body && header.dim_notes && !header.dim_header);
+        assert_eq!(focus_dim(Some(PartKind::Footer)), header);
+        let body = focus_dim(None);
+        assert!(!body.dim_body && body.dim_header && !body.dim_notes);
+        assert_eq!(focus_dim(Some(PartKind::TextBox)), body);
+
+        let mut app = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::from_text("Research draft.")), Default::default());
+        app.run("references.footnote", json!({"text": "SALJ 12."})).unwrap();
+        let layout = app.session.layout();
+        assert_eq!(focus_part_kind(&app, &layout), Some(PartKind::Footnote));
+        assert_eq!(focus_dim(focus_part_kind(&app, &layout)), note);
+        // Back in the body, headers dim and the note area is not a special case.
+        app.session.sel = wordcraft_engine::Selection::caret(wordcraft_doc::Pos::body(0, 0));
+        let layout = app.session.layout();
+        assert_eq!(focus_dim(focus_part_kind(&app, &layout)), body);
+    }
 
     /// #167: dragging a ruler's margin edge sets that margin, snapped, never negative, and
     /// always leaving an inch of text.

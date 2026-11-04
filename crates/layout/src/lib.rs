@@ -1036,13 +1036,13 @@ impl PageBuilder<'_> {
             if cont {
                 // Page starts with a continued note: use custom continuation separator if available.
                 if let Some(items) = &self.footnote_cont_items {
+                    let start_idx = pg.items.len();
                     for mut it in items.clone() {
                         it.translate(x, cur_y);
                         pg.items.push(it);
                     }
-                    // Add the height of the separator items.
-                    for it in items {
-                        let (_, bottom) = v_span(it);
+                    for idx in start_idx..pg.items.len() {
+                        let (_, bottom) = v_span(&pg.items[idx]);
                         cur_y = cur_y.max(bottom);
                     }
                 } else {
@@ -1051,25 +1051,26 @@ impl PageBuilder<'_> {
                 }
                 // Draw continuation notice if available.
                 if let Some(items) = &self.footnote_notice_items {
+                    let start_idx = pg.items.len();
                     for mut it in items.clone() {
                         it.translate(x, cur_y);
                         pg.items.push(it);
                     }
-                    for it in items {
-                        let (_, bottom) = v_span(it);
+                    for idx in start_idx..pg.items.len() {
+                        let (_, bottom) = v_span(&pg.items[idx]);
                         cur_y = cur_y.max(bottom);
                     }
                 }
             } else {
                 // Normal footnote separator: use custom separator if available, else default short line.
                 if let Some(items) = &self.footnote_sep_items {
+                    let start_idx = pg.items.len();
                     for mut it in items.clone() {
                         it.translate(x, cur_y);
                         pg.items.push(it);
                     }
-                    // Add the height of the separator items.
-                    for it in items {
-                        let (_, bottom) = v_span(it);
+                    for idx in start_idx..pg.items.len() {
+                        let (_, bottom) = v_span(&pg.items[idx]);
                         cur_y = cur_y.max(bottom);
                     }
                 } else {
@@ -1409,13 +1410,14 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
             // Normal endnote separator: use custom separator if available, else default short line.
             let mut cur_y = ry;
             if let Some(items) = sep_items {
+                let start_idx = pg.items.len();
                 for mut it in &items {
                     let mut it = it.clone();
                     it.translate(x, cur_y);
                     pg.items.push(it);
                 }
-                for it in &items {
-                    let (_, bottom) = v_span(it);
+                for idx in start_idx..pg.items.len() {
+                    let (_, bottom) = v_span(&pg.items[idx]);
                     cur_y = cur_y.max(bottom);
                 }
             } else {

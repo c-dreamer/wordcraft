@@ -783,6 +783,45 @@ impl Reader<'_> {
                 break;
             }
         }
+        // Read continuation separator (w:type="continuationSeparator" w:id="0") and notice.
+        let mut cont_separator = None;
+        let mut cont_notice = None;
+        for n in root.children(tag) {
+            match n.attr("w:type") {
+                Some("continuationSeparator") if n.attr("w:id") == Some("0") => {
+                    let mut sc = StoryCtx::default();
+                    let mut blocks = Blocks::new();
+                    self.read_blocks(&mut sc, n, &rels, &mut blocks, 0);
+                    self.flush_pending(&mut sc, &mut blocks);
+                    if !blocks.is_empty() {
+                        cont_separator = Some(blocks);
+                    }
+                }
+                Some("continuationNotice") if n.attr("w:id") == Some("0") => {
+                    let mut sc = StoryCtx::default();
+                    let mut blocks = Blocks::new();
+                    self.read_blocks(&mut sc, n, &rels, &mut blocks, 0);
+                    self.flush_pending(&mut sc, &mut blocks);
+                    if !blocks.is_empty() {
+                        cont_notice = Some(blocks);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if cont_separator.is_some() || cont_notice.is_some() {
+            if foot {
+                self.doc.settings.footnote_continuation = Some(NoteContinuation {
+                    separator: cont_separator,
+                    notice: cont_notice,
+                });
+            } else {
+                self.doc.settings.endnote_continuation = Some(NoteContinuation {
+                    separator: cont_separator,
+                    notice: cont_notice,
+                });
+            }
+        }
         for n in root.children(tag) {
             if n.attr("w:type").is_some_and(|t| t != "normal") {
                 continue;

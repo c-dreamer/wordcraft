@@ -361,6 +361,31 @@ fn note_marks_reference_their_own_note() {
 }
 
 #[test]
+fn continuation_separator_and_notice_from_footnotes_xml() {
+    // Test reading continuation separator and notice from footnotes.xml (not settings.xml)
+    let footnotes = format!(
+        r#"<w:footnotes {W_NS}>
+            <w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>
+            <w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:t xml:space="preserve">Custom continuation separator</w:t></w:r></w:p></w:footnote>
+            <w:footnote w:type="continuationNotice" w:id="0"><w:p><w:r><w:t xml:space="preserve">Continued on next page...</w:t></w:r></w:p></w:footnote>
+            <w:footnote w:id="1"><w:p><w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/><w:t xml:space="preserve"> First note.</w:t></w:r></w:p></w:footnote>
+        </w:footnotes>"#
+    );
+    let body = r#"<w:p><w:r><w:footnoteReference w:id="1"/></w:r><w:t>Text</w:t></w:r></w:p>"#;
+    let bytes = docx(
+        body,
+        &[("rId1", "footnotes", "footnotes.xml")],
+        &[("word/footnotes.xml", &footnotes)],
+    );
+    let d = wordcraft_docx::read(&bytes).unwrap();
+    let cont = d.settings.footnote_continuation.as_ref().expect("footnote continuation should be read");
+    let sep_text = cont.separator.as_ref().and_then(|b| b.first().and_then(|b| b.as_para())).map(|p| p.plain_text());
+    let notice_text = cont.notice.as_ref().and_then(|b| b.first().and_then(|b| b.as_para())).map(|p| p.plain_text());
+    assert_eq!(sep_text, Some("Custom continuation separator".to_string()));
+    assert_eq!(notice_text, Some("Continued on next page...".to_string()));
+}
+
+#[test]
 fn empty_tbl_borders_elements_leave_sides_unset() {
     // Style TS: single borders on all six sides. Document: table styled TS with an empty
     // paired <w:tblBorders></w:tblBorders> and empty <w:tcBorders></w:tcBorders> per cell.

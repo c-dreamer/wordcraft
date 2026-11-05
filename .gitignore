@@ -8,3 +8,6 @@ plan/
 /.claude/
 /target-*/
 /craft-fonts/
+
+# macOS AppleDouble metadata
+._*

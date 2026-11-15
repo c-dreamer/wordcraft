@@ -386,6 +386,31 @@ fn continuation_separator_and_notice_from_footnotes_xml() {
 }
 
 #[test]
+fn continuation_separator_and_notice_from_endnotes_xml() {
+    // Test reading continuation separator and notice from endnotes.xml (not settings.xml)
+    let endnotes = format!(
+        r#"<w:endnotes {W_NS}>
+            <w:endnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:endnote>
+            <w:endnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:t xml:space="preserve">Custom endnote continuation separator</w:t></w:r></w:p></w:endnote>
+            <w:endnote w:type="continuationNotice" w:id="0"><w:p><w:r><w:t xml:space="preserve">Endnote continued on next page...</w:t></w:r></w:p></w:endnote>
+            <w:endnote w:id="1"><w:p><w:pPr><w:pStyle w:val="EndnoteText"/></w:pPr><w:r><w:rPr><w:rStyle w:val="EndnoteReference"/></w:rPr><w:endnoteRef/><w:t xml:space="preserve"> First endnote.</w:t></w:r></w:p></w:endnote>
+        </w:endnotes>"#
+    );
+    let body = r#"<w:p><w:r><w:endnoteReference w:id="1"/></w:r><w:t>Text</w:t></w:r></w:p>"#;
+    let bytes = docx(
+        body,
+        &[("rId1", "endnotes", "endnotes.xml")],
+        &[("word/endnotes.xml", &endnotes)],
+    );
+    let d = wordcraft_docx::read(&bytes).unwrap();
+    let cont = d.settings.endnote_continuation.as_ref().expect("endnote continuation should be read");
+    let sep_text = cont.separator.as_ref().and_then(|b| b.first().and_then(|b| b.as_para())).map(|p| p.plain_text());
+    let notice_text = cont.notice.as_ref().and_then(|b| b.first().and_then(|b| b.as_para())).map(|p| p.plain_text());
+    assert_eq!(sep_text, Some("Custom endnote continuation separator".to_string()));
+    assert_eq!(notice_text, Some("Endnote continued on next page...".to_string()));
+}
+
+#[test]
 fn empty_tbl_borders_elements_leave_sides_unset() {
     // Style TS: single borders on all six sides. Document: table styled TS with an empty
     // paired <w:tblBorders></w:tblBorders> and empty <w:tcBorders></w:tcBorders> per cell.

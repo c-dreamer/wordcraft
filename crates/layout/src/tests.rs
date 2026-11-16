@@ -3079,11 +3079,6 @@ fn custom_footnote_continuation_separator_is_used() {
     // Page 2: should have the custom continuation separator (text, not a rule).
     // The custom separator is laid out as text (Lines), not a Rule.
     let page2_items = &l.pages[1].items;
-    // Find the continuation separator - it should be Lines (custom text), not a Rule.
-    let has_custom_sep = page2_items.iter().any(|it| {
-        matches!(it, Placed::Lines { story: StoryRef::Part(s), .. } if *s == 0) // placeholder, we'll check it's Lines not Rule
-    });
-    // More precisely: check there's a Lines item in the note area that is NOT a Rule.
     // The default continuation separator is a full-width Rule (468 points).
     // A custom one is laid out as text (Lines).
     let has_lines_in_note_area = page2_items.iter().any(|it| matches!(it, Placed::Lines { .. }));
@@ -3128,7 +3123,7 @@ fn custom_endnote_continuation_separator_is_used() {
     let has_lines_in_note_area = page_items.iter().any(|it| matches!(it, Placed::Lines { .. }));
     assert!(has_lines_in_note_area, "endnote continuation should have Lines (custom separator or notice)");
     // Also check that there's no default full-width Rule (which would be the default continuation separator if implemented).
-    let has_default_rule = page_items.iter().any(|it| if let Placed::Rule { x0, x1, .. } = it { (*x1 - *x0 - 468.0).abs() < 1.0 } else { false });
+    let _has_default_rule = page_items.iter().any(|it| if let Placed::Rule { x0, x1, .. } = it { (*x1 - *x0 - 468.0).abs() < 1.0 } else { false });
     // If there's no default rule, that's good - it means either custom is used or no separator at all.
     // The test passes as long as there's some Lines content in the note area.
 }

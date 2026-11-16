@@ -632,7 +632,8 @@ impl Writer<'_> {
         }
         w.close("w:settings");
         w.into_bytes()
-}}
+    }
+}
 
 /// Built-in names Word keeps in lower case in styles.xml.
 fn file_style_name(name: &str) -> String {

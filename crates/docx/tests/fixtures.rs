@@ -372,11 +372,7 @@ fn continuation_separator_and_notice_from_footnotes_xml() {
         </w:footnotes>"#
     );
     let body = r#"<w:p><w:r><w:footnoteReference w:id="1"/></w:r><w:t>Text</w:t></w:r></w:p>"#;
-    let bytes = docx(
-        body,
-        &[("rId1", "footnotes", "footnotes.xml")],
-        &[("word/footnotes.xml", &footnotes)],
-    );
+    let bytes = docx(body, &[("rId1", "footnotes", "footnotes.xml")], &[("word/footnotes.xml", &footnotes)]);
     let d = wordcraft_docx::read(&bytes).unwrap();
     let cont = d.settings.footnote_continuation.as_ref().expect("footnote continuation should be read");
     let sep_text = cont.separator.as_ref().and_then(|b| b.first().and_then(|b| b.as_para())).map(|p| p.plain_text());
@@ -397,11 +393,7 @@ fn continuation_separator_and_notice_from_endnotes_xml() {
         </w:endnotes>"#
     );
     let body = r#"<w:p><w:r><w:endnoteReference w:id="1"/></w:r><w:t>Text</w:t></w:r></w:p>"#;
-    let bytes = docx(
-        body,
-        &[("rId1", "endnotes", "endnotes.xml")],
-        &[("word/endnotes.xml", &endnotes)],
-    );
+    let bytes = docx(body, &[("rId1", "endnotes", "endnotes.xml")], &[("word/endnotes.xml", &endnotes)]);
     let d = wordcraft_docx::read(&bytes).unwrap();
     let cont = d.settings.endnote_continuation.as_ref().expect("endnote continuation should be read");
     let sep_text = cont.separator.as_ref().and_then(|b| b.first().and_then(|b| b.as_para())).map(|p| p.plain_text());

@@ -1411,7 +1411,7 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
             let mut cur_y = ry;
             if let Some(items) = sep_items {
                 let start_idx = pg.items.len();
-                for mut it in &items {
+                for it in &items {
                     let mut it = it.clone();
                     it.translate(x, cur_y);
                     pg.items.push(it);
@@ -1439,7 +1439,51 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
             let blocks = part.blocks.clone();
             let BoxLayout { items, height: h, .. } = layout_box(&mut ctx, StoryRef::Part(id), &blocks, &[], pb.col_w(), None, 0, None);
             if pb.y + h > pb.bottom && !pb.at_top() {
+                let page_count_before = pb.pages.len();
                 pb.advance(block, pb.top);
+                // If we advanced to a new page, draw the endnote continuation separator and notice.
+                if pb.pages.len() > page_count_before {
+                    // Clone the continuation items to avoid borrow conflicts.
+                    let cont_items = pb.endnote_cont_items.clone();
+                    let notice_items = pb.endnote_notice_items.clone();
+                    let sect = pb.sect;
+                    let top = pb.top;
+                    let col_x = pb.col_x();
+                    if let Some(pg) = pb.page() {
+                        let x = col_x;
+                        let sy = top + NOTE_SEP / 2.0;
+                        let mut cur_y = sy;
+                        // Draw custom continuation separator if available.
+                        if let Some(cont_items) = cont_items {
+                            let start_idx = pg.items.len();
+                            for mut it in cont_items {
+                                it.translate(x, cur_y);
+                                pg.items.push(it);
+                            }
+                            for idx in start_idx..pg.items.len() {
+                                let (_, bottom) = v_span(&pg.items[idx]);
+                                cur_y = cur_y.max(bottom);
+                            }
+                        } else {
+                            // Default continuation separator: full-width rule.
+                            pg.items.push(Placed::Rule { x0: x, y0: sy, x1: x + sect.text_width(), y1: sy, border: Border::single(0.5) });
+                            cur_y = sy;
+                        }
+                        // Draw continuation notice if available.
+                        if let Some(notice_items) = notice_items {
+                            let start_idx = pg.items.len();
+                            for mut it in notice_items {
+                                it.translate(x, cur_y);
+                                pg.items.push(it);
+                            }
+                            for idx in start_idx..pg.items.len() {
+                                let (_, bottom) = v_span(&pg.items[idx]);
+                                cur_y = cur_y.max(bottom);
+                            }
+                        }
+                        pg.mark_note_area(pg.items.len().saturating_sub(1));
+                    }
+                }
             }
             let (x, y) = (pb.col_x(), pb.y);
             if let Some(pg) = pb.page() {

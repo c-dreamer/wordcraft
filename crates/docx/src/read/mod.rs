@@ -677,11 +677,7 @@ impl Reader<'_> {
                 "w:footnotePr" => {
                     if let Some(cs) = k.child("w:continuationSeparator") {
                         let separator = self.read_blocks_from_element(cs)?;
-                        let notice = if let Some(cn) = k.child("w:continuationNotice") {
-                            self.read_blocks_from_element(cn).ok()
-                        } else {
-                            None
-                        };
+                        let notice = if let Some(cn) = k.child("w:continuationNotice") { self.read_blocks_from_element(cn).ok() } else { None };
                         footnote_continuation = Some(NoteContinuation { separator: Some(separator), notice });
                     } else if let Some(cn) = k.child("w:continuationNotice") {
                         let notice = self.read_blocks_from_element(cn)?;
@@ -691,11 +687,7 @@ impl Reader<'_> {
                 "w:endnotePr" => {
                     if let Some(cs) = k.child("w:continuationSeparator") {
                         let separator = self.read_blocks_from_element(cs)?;
-                        let notice = if let Some(cn) = k.child("w:continuationNotice") {
-                            self.read_blocks_from_element(cn).ok()
-                        } else {
-                            None
-                        };
+                        let notice = if let Some(cn) = k.child("w:continuationNotice") { self.read_blocks_from_element(cn).ok() } else { None };
                         endnote_continuation = Some(NoteContinuation { separator: Some(separator), notice });
                     } else if let Some(cn) = k.child("w:continuationNotice") {
                         let notice = self.read_blocks_from_element(cn)?;
@@ -811,15 +803,9 @@ impl Reader<'_> {
         }
         if cont_separator.is_some() || cont_notice.is_some() {
             if foot {
-                self.doc.settings.footnote_continuation = Some(NoteContinuation {
-                    separator: cont_separator,
-                    notice: cont_notice,
-                });
+                self.doc.settings.footnote_continuation = Some(NoteContinuation { separator: cont_separator, notice: cont_notice });
             } else {
-                self.doc.settings.endnote_continuation = Some(NoteContinuation {
-                    separator: cont_separator,
-                    notice: cont_notice,
-                });
+                self.doc.settings.endnote_continuation = Some(NoteContinuation { separator: cont_separator, notice: cont_notice });
             }
         }
         for n in root.children(tag) {
